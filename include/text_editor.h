@@ -13,6 +13,12 @@ void InitializeTextEditor(void);
 // Cleanup text editor data
 void CleanupTextEditor(void);
 
+// Open a file
+BOOL OpenTextFile(HWND hwnd);
+
+// Save a file
+BOOL SaveTextFile(HWND hwnd);
+
 // Window Procedure for the text editor
 LRESULT CALLBACK TextEditorProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 

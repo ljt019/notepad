@@ -1,11 +1,19 @@
 // text_editor.c
 #include "text_editor.h"
 #include <stdlib.h>
+#include <string.h>
 #include <windows.h>
+#include <stdio.h>
 
 // Global buffer to store the text
 static char g_text[MAX_TEXT] = "";
 static int g_text_length = 0;
+
+// Global to store current file
+static char g_current_file[MAX_PATH] = "";
+
+// Global font handle
+static HFONT g_hFont = NULL;
 
 // Function to convert VK code to character considering the keyboard state
 static char VKCodeToChar(WPARAM wParam, LPARAM lParam)
@@ -42,11 +50,104 @@ void InitializeTextEditor(void)
 {
     g_text[0] = '\0';
     g_text_length = 0;
+    g_current_file[0] = '\0';
+
+    // Create a larger font
+    g_hFont = CreateFont(
+        20,                          // Height of font
+        0,                           // Width of font
+        0,                           // Angle of escapement
+        0,                           // Orientation angle
+        FW_NORMAL,                   // Font weight
+        FALSE,                       // Italic
+        FALSE,                       // Underline
+        FALSE,                       // Strikeout
+        ANSI_CHARSET,                // Character set identifier
+        OUT_OUTLINE_PRECIS,          // Output precision
+        CLIP_DEFAULT_PRECIS,         // Clipping precision
+        CLEARTYPE_QUALITY,           // Output quality
+        DEFAULT_PITCH | FF_DONTCARE, // Pitch and family
+        "Arial");                    // Font name
 }
 
 void CleanupTextEditor(void)
 {
-    // Currently, no dynamic resources to clean up
+    if (g_hFont != NULL)
+    {
+        DeleteObject(g_hFont);
+        g_hFont = NULL;
+    }
+}
+
+BOOL OpenTextFile(HWND hwnd)
+{
+    OPENFILENAMEA ofn;
+    char szFile[MAX_PATH] = "";
+
+    ZeroMemory(&ofn, sizeof(ofn));
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = hwnd;
+    ofn.lpstrFile = szFile;
+    ofn.nMaxFile = sizeof(szFile);
+    ofn.lpstrFilter = "Text Files\0*.txt\0All Files\0*.*\0";
+    ofn.nFilterIndex = 1;
+    ofn.lpstrFileTitle = NULL;
+    ofn.nMaxFileTitle = 0;
+    ofn.lpstrInitialDir = NULL;
+    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+
+    if (GetOpenFileNameA(&ofn) == TRUE)
+    {
+        FILE *file = fopen(szFile, "r");
+        if (file != NULL)
+        {
+            g_text_length = fread(g_text, sizeof(char), MAX_TEXT - 1, file);
+            g_text[g_text_length] = '\0';
+            fclose(file);
+            strncpy(g_current_file, szFile, MAX_PATH);
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+BOOL SaveTextFile(HWND hwnd)
+{
+    if (g_current_file[0] == '\0')
+    {
+        OPENFILENAMEA ofn;
+        char szFile[MAX_PATH] = "";
+
+        ZeroMemory(&ofn, sizeof(ofn));
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = hwnd;
+        ofn.lpstrFile = szFile;
+        ofn.nMaxFile = sizeof(szFile);
+        ofn.lpstrFilter = "Text Files\0*.txt\0All Files\0*.*\0";
+        ofn.nFilterIndex = 1;
+        ofn.lpstrFileTitle = NULL;
+        ofn.nMaxFileTitle = 0;
+        ofn.lpstrInitialDir = NULL;
+        ofn.Flags = OFN_OVERWRITEPROMPT;
+
+        if (GetSaveFileNameA(&ofn) == TRUE)
+        {
+            strncpy(g_current_file, szFile, MAX_PATH);
+        }
+        else
+        {
+            return FALSE;
+        }
+    }
+
+    FILE *file = fopen(g_current_file, "w");
+    if (file != NULL)
+    {
+        fwrite(g_text, sizeof(char), g_text_length, file);
+        fclose(file);
+        return TRUE;
+    }
+    return FALSE;
 }
 
 // Window Procedure
@@ -70,10 +171,16 @@ LRESULT CALLBACK TextEditorProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPar
         SetTextColor(hdc, RGB(255, 255, 255));
         SetBkColor(hdc, RGB(0, 0, 0));
 
+        // Select the custom font into the device context
+        HFONT hOldFont = (HFONT)SelectObject(hdc, g_hFont);
+
         // Draw the text
         RECT rect;
         GetClientRect(hwnd, &rect);
         DrawTextA(hdc, g_text, -1, &rect, DT_LEFT | DT_TOP | DT_WORDBREAK);
+
+        // Restore the old font
+        SelectObject(hdc, hOldFont);
 
         EndPaint(hwnd, &ps);
         return 0;
@@ -83,48 +190,64 @@ LRESULT CALLBACK TextEditorProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lPar
     {
         BOOL textChanged = FALSE;
 
-        switch (wParam)
+        // Handle Ctrl+O for open
+        if (wParam == 'O' && GetKeyState(VK_CONTROL) < 0)
         {
-        case VK_BACK:
-            if (g_text_length > 0)
+            if (OpenTextFile(hwnd))
             {
-                g_text_length--;
-                g_text[g_text_length] = '\0';
                 textChanged = TRUE;
             }
-            break;
-
-        case VK_SPACE:
-            if (g_text_length < MAX_TEXT - 1)
+        }
+        // Handle Ctrl+S for save
+        else if (wParam == 'S' && GetKeyState(VK_CONTROL) < 0)
+        {
+            SaveTextFile(hwnd);
+        }
+        else
+        {
+            switch (wParam)
             {
-                g_text[g_text_length++] = ' ';
-                g_text[g_text_length] = '\0';
-                textChanged = TRUE;
-            }
-            break;
-
-        case VK_RETURN:
-            if (g_text_length < MAX_TEXT - 1)
-            {
-                g_text[g_text_length++] = '\n';
-                g_text[g_text_length] = '\0';
-                textChanged = TRUE;
-            }
-            break;
-
-        default:
-            // Filter out non-character keys
-            if (!(wParam == VK_SHIFT || wParam == VK_CONTROL || wParam == VK_MENU))
-            {
-                char c = VKCodeToChar(wParam, lParam);
-                if (c != '\0' && g_text_length < MAX_TEXT - 1)
+            case VK_BACK:
+                if (g_text_length > 0)
                 {
-                    g_text[g_text_length++] = c;
+                    g_text_length--;
                     g_text[g_text_length] = '\0';
                     textChanged = TRUE;
                 }
+                break;
+
+            case VK_SPACE:
+                if (g_text_length < MAX_TEXT - 1)
+                {
+                    g_text[g_text_length++] = ' ';
+                    g_text[g_text_length] = '\0';
+                    textChanged = TRUE;
+                }
+                break;
+
+            case VK_RETURN:
+                if (g_text_length < MAX_TEXT - 1)
+                {
+                    g_text[g_text_length++] = '\n';
+                    g_text[g_text_length] = '\0';
+                    textChanged = TRUE;
+                }
+                break;
+
+            default:
+                // Filter out non-character keys
+                if (!(wParam == VK_SHIFT || wParam == VK_CONTROL || wParam == VK_MENU))
+                {
+                    char c = VKCodeToChar(wParam, lParam);
+                    if (c != '\0' && g_text_length < MAX_TEXT - 1)
+                    {
+                        g_text[g_text_length++] = c;
+                        g_text[g_text_length] = '\0';
+                        textChanged = TRUE;
+                    }
+                }
+                break;
             }
-            break;
         }
 
         if (textChanged)
