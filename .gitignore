@@ -1,1 +1,8 @@
-/target/**/*
+# .gitignore
+
+/obj/
+/build/
+/target/
+*.exe
+*.o
+*.log
