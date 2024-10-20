@@ -4,6 +4,15 @@
 // Define the maximum text size
 #define MAX_TEXT 1024
 
+// Define DWM Attributes manually
+#ifndef DWMWA_CAPTION_COLOR
+#define DWMWA_CAPTION_COLOR 35
+#endif
+
+#ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
+#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
+#endif
+
 // Create a Global Buffer to store the text
 char g_text[MAX_TEXT] = "";
 int g_text_length = 0;
@@ -42,6 +51,17 @@ char VKCodeToChar(WPARAM wParam, LPARAM lParam)
     return '\0';
 }
 
+// Define the DWM function pointer type
+typedef HRESULT(WINAPI *DwmSetWindowAttribute_t)(
+    HWND hwnd,
+    DWORD dwAttribute,
+    LPCVOID pvAttribute,
+    DWORD cbAttribute);
+
+// Global function pointer
+DwmSetWindowAttribute_t pDwmSetWindowAttribute = NULL;
+
+// Window Procedure
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
     switch (uMsg)
@@ -63,7 +83,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         SetBkColor(hdc, RGB(0, 0, 0));
 
         // Draw the text
-        TextOutA(hdc, 10, 10, g_text, g_text_length);
+        RECT rect;
+        GetClientRect(hwnd, &rect);
+        DrawTextA(hdc, g_text, -1, &rect, DT_LEFT | DT_TOP | DT_WORDBREAK);
 
         EndPaint(hwnd, &ps);
         return 0;
@@ -87,6 +109,17 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
             if (g_text_length < MAX_TEXT - 1)
             {
                 g_text[g_text_length] = ' ';
+                g_text_length++;
+                g_text[g_text_length] = '\0';
+                InvalidateRect(hwnd, NULL, TRUE);
+            }
+            return 0;
+        }
+        case VK_RETURN:
+        {
+            if (g_text_length < MAX_TEXT - 1)
+            {
+                g_text[g_text_length] = '\n';
                 g_text_length++;
                 g_text[g_text_length] = '\0';
                 InvalidateRect(hwnd, NULL, TRUE);
@@ -123,47 +156,81 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
     }
 }
 
-// hInstance : instance handle
-// hPrevInstance : previous instance handle
-// lpCmdLine : command line arguments
-// nCmdShow : how the window is to be shown
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {
+    // Load dwmapi.dll dynamically
+    HMODULE hDwm = LoadLibraryA("dwmapi.dll");
+    if (!hDwm)
+    {
+        MessageBoxA(NULL, "Failed to load dwmapi.dll", "Error", MB_ICONERROR | MB_OK);
+        return 0;
+    }
+
+    // Retrieve the address of DwmSetWindowAttribute
+    pDwmSetWindowAttribute = (DwmSetWindowAttribute_t)GetProcAddress(hDwm, "DwmSetWindowAttribute");
+    if (!pDwmSetWindowAttribute)
+    {
+        MessageBoxA(NULL, "Failed to get DwmSetWindowAttribute address", "Error", MB_ICONERROR | MB_OK);
+        FreeLibrary(hDwm);
+        return 0;
+    }
+
     // Register the window class
     const char basic_window[] = "Sample Window Class";
 
     WNDCLASSA windows_class = {0};
 
     windows_class.lpfnWndProc = WindowProc; // Windows Procedure callback function
-    windows_class.hInstance = hInstance;    // handle for application instance
+    windows_class.hInstance = hInstance;    // Handle for application instance
     windows_class.lpszClassName = basic_window;
     windows_class.hCursor = LoadCursor(NULL, IDC_ARROW);
     windows_class.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
 
     if (!RegisterClassA(&windows_class))
     {
+        MessageBoxA(NULL, "Failed to register window class", "Error", MB_ICONERROR | MB_OK);
+        FreeLibrary(hDwm);
         return 0;
     }
 
     // Create the window
-    HWND hwnd = CreateWindowExA(0,                   // Optional window styles
-                                basic_window,        // Window class
-                                "Text Editor",       // Window text
-                                WS_OVERLAPPEDWINDOW, // Window style
+    HWND hwnd = CreateWindowExA(
+        0,                   // Optional window styles
+        basic_window,        // Window class
+        "Text Editor",       // Window text
+        WS_OVERLAPPEDWINDOW, // Window style
 
-                                // Size and position
-                                CW_USEDEFAULT, CW_USEDEFAULT, 800, 600,
+        // Size and position
+        CW_USEDEFAULT, CW_USEDEFAULT, 800, 600,
 
-                                NULL,      // Parent window
-                                NULL,      // Menu
-                                hInstance, // Instance handle
-                                NULL       // Additional application data
+        NULL,      // Parent window
+        NULL,      // Menu
+        hInstance, // Instance handle
+        NULL       // Additional application data
     );
 
     // If window creation failed, return 0
     if (hwnd == NULL)
     {
+        MessageBoxA(NULL, "Failed to create window", "Error", MB_ICONERROR | MB_OK);
+        FreeLibrary(hDwm);
         return 0;
+    }
+
+    // Set the title bar color to dark grey
+    COLORREF darkGreyColor = RGB(64, 64, 64); // Adjust RGB values for desired shade
+    HRESULT hr = pDwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &darkGreyColor, sizeof(darkGreyColor));
+    if (FAILED(hr))
+    {
+        MessageBoxA(NULL, "Failed to set window attribute DWMWA_CAPTION_COLOR", "Error", MB_ICONERROR | MB_OK);
+    }
+
+    // Optionally, enable dark mode for the window
+    BOOL useDarkMode = TRUE;
+    hr = pDwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &useDarkMode, sizeof(useDarkMode));
+    if (FAILED(hr))
+    {
+        MessageBoxA(NULL, "Failed to set window attribute DWMWA_USE_IMMERSIVE_DARK_MODE", "Error", MB_ICONERROR | MB_OK);
     }
 
     ShowWindow(hwnd, nCmdShow);
@@ -175,6 +242,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }
+
+    // Free the DLL when done
+    FreeLibrary(hDwm);
 
     return 0;
 }
